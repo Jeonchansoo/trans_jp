@@ -1,0 +1,6 @@
+{
+  "name": "한일 실시간 통번역기",
+  "description": "일본 여행을 위한 실시간 한국어-일본어 양방향 통번역 대화, 사진 번역 및 필수 현지 회화 가이드",
+  "requestFramePermissions": ["microphone", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

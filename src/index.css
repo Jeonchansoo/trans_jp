@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Noto Sans KR", "Noto Sans JP", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+
+  --animate-soundwave1: soundwave 0.6s ease-in-out infinite alternate 0s;
+  --animate-soundwave2: soundwave 0.6s ease-in-out infinite alternate 0.1s;
+  --animate-soundwave3: soundwave 0.6s ease-in-out infinite alternate 0.2s;
+  --animate-soundwave4: soundwave 0.6s ease-in-out infinite alternate 0.3s;
+  --animate-soundwave5: soundwave 0.6s ease-in-out infinite alternate 0.4s;
+
+  @keyframes soundwave {
+    0% {
+      transform: scaleY(0.2);
+    }
+    100% {
+      transform: scaleY(1.2);
+    }
+  }
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #faf9f6;
+  color: #1c1917;
+}
