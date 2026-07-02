@@ -1,22 +1,14 @@
 {
+  "buildCommand": "vite build",
+  "outputDirectory": "dist",
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "dest": "/api/$1"
-    }
-  ],
-  "functions": {
-    "api/**/*.ts": {
-      "runtime": "nodejs18.x"
-    }
-  },
-  "builds": [
+      "destination": "/api/$1"
+    },
     {
-      "src": "api/**/*.ts",
-      "use": "@vercel/node"
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
     }
-  ],
-  "ignore": [
-    "server.ts"
   ]
 }
