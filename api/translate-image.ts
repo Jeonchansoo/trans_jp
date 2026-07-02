@@ -1,30 +1,51 @@
-import { VercelRequest, VercelResponse } from '@vercel/node';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from '@google/genai';
-import { generateContentWithFallback } from '../src/utils/gemini';
+
+async function generateWithFallback(ai: GoogleGenAI, params: any, models: string[]) {
+  let lastError: any;
+  for (const model of models) {
+    try {
+      const response = await ai.models.generateContent({ ...params, model });
+      return response;
+    } catch (e: any) {
+      lastError = e;
+      const msg = (e.message || '').toLowerCase();
+      if (msg.includes('key') || msg.includes('api_key') || msg.includes('invalid') || msg.includes('unauthorized')) {
+        throw e;
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
+  throw lastError;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method Not Allowed' });
     return;
   }
-  const { image, targetLang, apiKey: userApiKey } = req.body ?? {};
+
+  const { image, apiKey: userApiKey } = req.body ?? {};
+
   if (!image) {
     res.status(400).json({ error: 'Image data (base64) is required.' });
     return;
   }
+
   const apiKey = userApiKey || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     res.status(500).json({
       error: 'API Key Missing',
-      message: '설정에서 제미나이 API 키를 입력해주세요.',
+      message: '설정에서 제미나이 API 키를 입력해주세요. Google AI Studio에서 무료로 발급받을 수 있습니다.',
     });
     return;
   }
+
   const ai = new GoogleGenAI({
     apiKey,
     httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
   });
-  // Clean base64 and mime
+
   let base64Data = image;
   let mimeType = 'image/jpeg';
   if (image.startsWith('data:')) {
@@ -34,13 +55,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       base64Data = m[2];
     }
   }
+
   const imagePart = { inlineData: { mimeType, data: base64Data } };
-  const prompt = `You are an expert Japanese tourist visual companion.\nTranslate the image text into natural Korean. Return JSON with detectedText, translatedText, items, guideTip.`;
+  const prompt = `You are an expert Japanese tourist visual companion.
+The user is traveling in Japan and has loaded an image (e.g., of a Japanese restaurant menu, subway directions, retail store sign, receipt, or warning label).
+Translate the Japanese (or foreign language) signs or text detected in the image into natural, clean Korean.
+Return a structured JSON report: detectedText, translatedText, items (list of parsed elements with original, pronunciation in Korean Hangeul ONLY, translated, price), guideTip.`;
+
   try {
-    const response = await generateContentWithFallback(
+    const response = await generateWithFallback(
       ai,
       {
-        model: 'gemini-3.5-flash',
         contents: [imagePart, { text: prompt }],
         config: {
           responseMimeType: 'application/json',
@@ -68,8 +93,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           },
         },
       },
-      ['gemini-3.5-flash']
+      ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
     );
+
     const json = JSON.parse(response.text.trim());
     res.json(json);
   } catch (err: any) {
