@@ -313,7 +313,7 @@ export default function App() {
     const cached = getCachedTranslation(cacheKey);
     if (cached) {
       setTranslatedResult(cached);
-      if (audioPlayMode === 'auto') handlePlayTTS(cached.translatedText, targetLang);
+      if (audioPlayMode === 'auto') handlePlayTTS(cached.translatedText, targetLang, undefined, targetLang === 'ja' ? cached.pronunciation : undefined);
       // update history/feed quickly without waiting network
       const userMessage: ConversationMessage = {
         id: "msg-cache-" + Date.now(),
@@ -364,9 +364,9 @@ export default function App() {
       // Cache the result to speed up repeated queries
       try { setCachedTranslation(cacheKey, data); } catch (e) { /* ignore */ }
 
-      // Auto TTS if enabled
+      // Auto TTS if enabled — pass pronunciation as fallback for when Japanese voice is unavailable
       if (audioPlayMode === 'auto') {
-        handlePlayTTS(data.translatedText, targetLang);
+        handlePlayTTS(data.translatedText, targetLang, undefined, targetLang === 'ja' ? data.pronunciation : undefined);
       }
 
       // Create translation history record
@@ -410,7 +410,9 @@ export default function App() {
   };
 
   // Trigger TTS Text to Speech audio synthesis
-  const handlePlayTTS = (text: string, langCode: 'ko' | 'ja', genderOverride?: 'female' | 'male') => {
+  // fallbackPronunciation: Korean phonetic text to speak when no Japanese voice is installed on device.
+  //   e.g. '콘니치와' instead of trying to read 'こんにちは' with a Korean voice (= garbled nonsense).
+  const handlePlayTTS = (text: string, langCode: 'ko' | 'ja', genderOverride?: 'female' | 'male', fallbackPronunciation?: string) => {
     if (!('speechSynthesis' in window)) {
       alert("이 브라우저는 음성 합성(TTS) 기능을 직접 지원하지 않습니다. 최신 브라우저를 이용해 주세요.");
       return;
@@ -430,10 +432,38 @@ export default function App() {
       // Set speech rate to absolute natural standard (1.0) to prevent any codec stutter/cracking
       utterance.rate = 1.0;
 
-      // Locate matching locale voices
+      // ── Japanese voice availability check ──────────────────────────────────────
+      // Korean devices typically do NOT have Japanese TTS voices installed.
+      // If a Korean voice tries to read Japanese text (kanji/kana), it produces
+      // completely garbled, unintelligible output that sounds like wrong words.
+      // Solution: detect missing Japanese voice and speak the Korean pronunciation
+      // guide (fallbackPronunciation) instead — e.g. '콘니치와' for 'こんにちは'.
       const voices = window.speechSynthesis.getVoices();
-      let chosenVoice: SpeechSynthesisVoice | null = null;
 
+      if (langCode === 'ja' && voices.length > 0) {
+        const jaVoices = voices.filter(v => v.lang.startsWith('ja'));
+        if (jaVoices.length === 0) {
+          // No Japanese voice found on this device
+          if (fallbackPronunciation) {
+            // Speak the Korean pronunciation guide in Korean TTS instead
+            const pronUtterance = new SpeechSynthesisUtterance(fallbackPronunciation);
+            pronUtterance.lang = 'ko-KR';
+            pronUtterance.rate = 0.88; // slightly slower for clarity
+            pronUtterance.pitch = activeGender === 'male' ? 0.80 : 1.05;
+            const koVoices = voices.filter(v => v.lang.startsWith('ko'));
+            if (koVoices.length > 0) {
+              pronUtterance.voice = koVoices.find(v => v.name.includes('Google')) || koVoices[0];
+            }
+            window.speechSynthesis.speak(pronUtterance);
+          }
+          // If no fallback pronunciation either, silently skip TTS rather than
+          // playing garbled audio that sounds like completely wrong words.
+          return;
+        }
+      }
+
+      // Locate matching locale voices
+      let chosenVoice: SpeechSynthesisVoice | null = null;
       let isActuallyMale = false;
 
       if (voices.length > 0) {
@@ -461,19 +491,14 @@ export default function App() {
             const nameLower = v.name.toLowerCase();
             return maleKeywords.some(kw => nameLower.includes(kw));
           }) || null;
-          if (chosenVoice) {
-            isActuallyMale = true;
-          }
+          if (chosenVoice) isActuallyMale = true;
         }
 
-        // Fallback to standard Google voice or general matching locale voice if gender-specific is not found
+        // Fallback: standard Google voice or first available matching locale voice
         if (!chosenVoice) {
           if (activeGender === 'female') {
             chosenVoice = matchingLocaleVoices.find(v => v.name.includes("Google")) || matchingLocaleVoices[0] || null;
           } else {
-            // Google online/network female voices completely ignore the custom pitch setting.
-            // Therefore, to successfully simulate a male voice when no native male voice is found,
-            // we MUST utilize a local (offline) voice, which fully respects pitch adjustments.
             chosenVoice = matchingLocaleVoices.find(v => v.localService)
               || matchingLocaleVoices.find(v => !v.name.includes("Google") && !v.name.includes("Natural"))
               || matchingLocaleVoices[0]
@@ -483,51 +508,37 @@ export default function App() {
 
         if (chosenVoice) {
           utterance.voice = chosenVoice;
-          // Double check if the chosen fallback voice actually matches a male keyword
           const nameLower = chosenVoice.name.toLowerCase();
-          if (maleKeywords.some(kw => nameLower.includes(kw))) {
-            isActuallyMale = true;
-          }
+          if (maleKeywords.some(kw => nameLower.includes(kw))) isActuallyMale = true;
         }
       }
 
-      // Check if chosen voice is an online Google cloud voice, as extreme pitch values can sometimes make it stutter or crack.
-      const isGoogleOrNetworkVoice = chosenVoice ? (chosenVoice.name.includes("Google") || !chosenVoice.localService) : true;
+      const isGoogleOrNetworkVoice = chosenVoice
+        ? (chosenVoice.name.includes("Google") || !chosenVoice.localService)
+        : true;
 
-      // Set highly clear and natural pitches to guarantee stability and prevent any speech codec cracking
       if (activeGender === 'female') {
-        utterance.pitch = isGoogleOrNetworkVoice ? 1.05 : 1.12; // Natural and bright female timbre without distortion
+        utterance.pitch = isGoogleOrNetworkVoice ? 1.05 : 1.12;
         utterance.rate = 1.0;
       } else {
-        // Create an extremely deep, thick cave-like bass register mimicking Forestella's Ko Woo-rim
-        // We slightly reduce speech rate to 0.90 to convey greater charisma, weight and gravity.
         utterance.rate = 0.90;
-        
-        if (isActuallyMale) {
-          // Pitch down native male voices significantly to simulate a deep bass singer
-          utterance.pitch = isGoogleOrNetworkVoice ? 0.58 : 0.53;
-        } else {
-          // Pitch down fallback synthesized voices to the absolute floor of the Synthesis API (0.50)
-          // This outputs a very heavy, low-frequency, deep-resonating bass resonance
-          utterance.pitch = isGoogleOrNetworkVoice ? 0.50 : 0.50;
-        }
+        // Note: pitch 0.50 caused severe audio distortion on many devices — raised to 0.72-0.75
+        utterance.pitch = isActuallyMale
+          ? (isGoogleOrNetworkVoice ? 0.75 : 0.70)
+          : (isGoogleOrNetworkVoice ? 0.72 : 0.68);
       }
 
-      // Speak immediately to preserve browser user-gesture context.
-      // A setTimeout would break the gesture chain after async fetch and cause browsers to block TTS.
-      // If voices haven't loaded yet, retry once via the voiceschanged event.
+      // Speak immediately — preserves browser user-gesture context across async fetch.
+      // If voices haven't loaded yet, retry once via voiceschanged event.
       if (voices.length === 0) {
         const onVoicesChanged = () => {
           window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
           window.speechSynthesis.speak(utterance);
         };
         window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged);
-        // Fallback: speak anyway after 300ms in case voiceschanged never fires
         setTimeout(() => {
           window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
-          if (!window.speechSynthesis.speaking) {
-            window.speechSynthesis.speak(utterance);
-          }
+          if (!window.speechSynthesis.speaking) window.speechSynthesis.speak(utterance);
         }, 300);
       } else {
         window.speechSynthesis.speak(utterance);
@@ -871,7 +882,7 @@ export default function App() {
       if (lang === 'ko') {
         setDialogueKoText(trimmed);
         setDialogueJaText(cached.translatedText);
-        if (audioPlayMode === 'auto') handlePlayTTS(cached.translatedText, 'ja');
+        if (audioPlayMode === 'auto') handlePlayTTS(cached.translatedText, 'ja', undefined, cached.pronunciation);
       } else {
         setDialogueJaText(trimmed);
         setDialogueKoText(cached.translatedText);
@@ -948,9 +959,9 @@ export default function App() {
 
       if (lang === 'ko') {
         setDialogueJaText(data.translatedText);
-        // Auto TTS if enabled
+        // Auto TTS if enabled — pass pronunciation as fallback for when Japanese voice is unavailable
         if (audioPlayMode === 'auto') {
-          handlePlayTTS(data.translatedText, 'ja');
+          handlePlayTTS(data.translatedText, 'ja', undefined, data.pronunciation);
         }
       } else {
         setDialogueKoText(data.translatedText);
