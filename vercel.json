@@ -3,12 +3,22 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
-    },
-    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "functions": {
+    "api/transcribe.ts": {
+      "maxDuration": 30
+    },
+    "api/translate.ts": {
+      "maxDuration": 30
+    },
+    "api/translate-image.ts": {
+      "maxDuration": 30
+    },
+    "api/config.ts": {
+      "maxDuration": 10
+    }
+  }
 }

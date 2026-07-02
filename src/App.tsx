@@ -513,11 +513,25 @@ export default function App() {
         }
       }
 
-      // Prevent race conditions and clear DAC buffer by introducing a 180ms delay.
-      // This is a browser & hardware-friendly practice that cures TTS cracking!
-      setTimeout(() => {
+      // Speak immediately to preserve browser user-gesture context.
+      // A setTimeout would break the gesture chain after async fetch and cause browsers to block TTS.
+      // If voices haven't loaded yet, retry once via the voiceschanged event.
+      if (voices.length === 0) {
+        const onVoicesChanged = () => {
+          window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
+          window.speechSynthesis.speak(utterance);
+        };
+        window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged);
+        // Fallback: speak anyway after 300ms in case voiceschanged never fires
+        setTimeout(() => {
+          window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
+          if (!window.speechSynthesis.speaking) {
+            window.speechSynthesis.speak(utterance);
+          }
+        }, 300);
+      } else {
         window.speechSynthesis.speak(utterance);
-      }, 180);
+      }
     } catch (err) {
       console.error("TTS audio playback error", err);
     }
@@ -666,7 +680,9 @@ export default function App() {
 
       const mediaRecorder = new MediaRecorder(stream, {
         mimeType: mimeType || undefined,
-        audioBitsPerSecond: 128000
+        // 32kbps is sufficient for speech-quality STT and keeps payloads
+        // well under Vercel's 4.5MB request body limit for audio recordings.
+        audioBitsPerSecond: 32000
       });
       mediaRecorderRef.current = mediaRecorder;
 
